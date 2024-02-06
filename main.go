@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -13,8 +14,6 @@ import (
 //TODO
 // - execute+issue: ready flag?
 // - execute: wakeup dependent instructions
-// - issue: sort issue temp list by tag (lowest = priority)
-// - dispatch: sort dispatch temp list by tag (lowest = priority)
 // - dispatch: Rename source + dest operands
 // - compare results to validation files
 
@@ -257,26 +256,29 @@ func Execute() {
 // //    the execution latency.
 func Issue() {
 	printTask("Issue")
-	issueCt := 0
 
 	// From the issue_list, construct a temp list of instructions whose
 	// operands are ready – these are the READY instructions.
 	if issue_list.Len() > 0 {
-		temp_list := list.New()
+		temp_list := []*instruction{}
 
 		// From the issue_list, construct a temp list of instructions whose
 		// operands are ready – these are the READY instructions.
 		//TODO all source operands are ready? Check instructions for more info
 		for e := issue_list.Front(); e != nil; e = e.Next() {
-			temp_list.PushBack(e.Value)
+			temp_list = append(temp_list, e.Value.(*instruction))
 		}
 
-		//TODO Scan the READY instructions in ascending order of tags
-
-		// and issue up to N+1 of them.
-		for e := temp_list.Front(); e != nil && issueCt < NPeakFetch+1; e = e.Next() {
-			issueCt++
-			i := e.Value.(*instruction)
+		// Scan the READY instructions in ascending order of tags
+		sort.SliceStable(temp_list, func(i, j int) bool {
+			return temp_list[i].tag < temp_list[j].tag
+		})
+		for issueCt, i := range temp_list {
+			if issueCt >= NPeakFetch+1 {
+				i.printInstruction("Issue stalled")
+				continue
+			}
+			// and issue up to N+1 of them
 			i.incrementStage() // IS -> EX
 
 			// // 4) Set a timer in the instruction’s data structure that will allow you to model
@@ -286,9 +288,9 @@ func Issue() {
 			i.printInstruction("Issue IS -> EX")
 
 			//1) Remove the instruction from the issue_list and add it to the execute_list.
-			execute_list.PushBack(e.Value)
+			execute_list.PushBack(i)
 			for d := issue_list.Front(); d != nil; d = d.Next() {
-				if d.Value == e.Value {
+				if d.Value == i {
 					issue_list.Remove(d)
 				}
 			}
@@ -318,7 +320,7 @@ func Dispatch() {
 	printTask("Dispatch")
 
 	if dispatch_list.Len() > 0 {
-		temp_list := list.New()
+		temp_list := []*instruction{}
 
 		for e := dispatch_list.Front(); e != nil; e = e.Next() {
 			i := e.Value.(*instruction)
@@ -327,31 +329,33 @@ func Dispatch() {
 				i.incrementStage() // IF -> ID  (models the 1 cycle latency for instruction fetch)
 				i.printInstruction("Dispatch IF -> ID")
 			case iTypeID:
-				temp_list.PushBack(e.Value)
+				temp_list = append(temp_list, e.Value.(*instruction))
 			}
 		}
 
-		//TODO Scan the temp list in ascending order of tags
+		// Scan the temp list in ascending order of tags
+		sort.SliceStable(temp_list, func(i, j int) bool {
+			return temp_list[i].tag < temp_list[j].tag
+		})
+		for _, i := range temp_list {
+			if issue_list.Len() >= SchedulingQueueSize {
+				i.printInstruction("Dispatch stalled")
+				continue
+			}
+			// if the scheduling queue is not full, then:
+			i.incrementStage() // ID -> IS
 
-		// if the scheduling queue is not full, then:
-		if issue_list.Len() < SchedulingQueueSize && temp_list.Len() > 0 {
-			for e := temp_list.Front(); e != nil && issue_list.Len() < SchedulingQueueSize; e = e.Next() {
-				//for e := temp_list.Front(); e != nil; e = e.Next() {
-				i := e.Value.(*instruction)
-				i.incrementStage() // ID -> IS
+			//TODO
+			// // 3) Rename source operands by looking up state in the register file;
+			// //    Rename destination by updating state in the register file.
 
-				//TODO
-				// // 3) Rename source operands by looking up state in the register file;
-				// //    Rename destination by updating state in the register file.
+			i.printInstruction("Dispatch ID -> IS")
 
-				i.printInstruction("Dispatch ID -> IS")
-
-				//1) Remove the instruction from the dispatch_list and add it to the issue_list.
-				issue_list.PushBack(e.Value)
-				for d := dispatch_list.Front(); d != nil; d = d.Next() {
-					if d.Value == e.Value {
-						dispatch_list.Remove(d)
-					}
+			//1) Remove the instruction from the dispatch_list and add it to the issue_list.
+			issue_list.PushBack(i)
+			for d := dispatch_list.Front(); d != nil; d = d.Next() {
+				if d.Value == i {
+					dispatch_list.Remove(d)
 				}
 			}
 		}
