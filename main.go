@@ -12,17 +12,14 @@ import (
 )
 
 //TODO
-// - execute+issue: ready flag?
-// - execute: wakeup dependent instructions
-// - dispatch: Rename source + dest operands
-// - compare results to validation files
+// - Determine amount of available reservation stations and handle accordingly (see TODO-01)
+// - Some instructions are moving into execute phase too soon (see TODO-02)
 
 // Debug settings
-const devMode = true
-const earlyExit = false
-const earlyExitCycles = 10
-const outputPrefix = "_out_"
-const outputSuffix = ".txt"
+const devMode = true          // print out extra information such as stage and instruction progress (disable for final submission)
+const earlyExitCycleLimit = 0 // execeute specified amount of clock cycles and then terminate (set to 0 to disable)
+const outputPrefix = "_out"   // output debug filename prefix
+const outputSuffix = "txt"    // output debug file extension
 
 //1) Define 5 states that an instruction can be in (e.g., use an enumerated
 //  type): IF (fetch), ID (dispatch), IS (issue), EX (execute), WB (writeback).
@@ -51,11 +48,11 @@ var operandLatency = []int{1, 2, 5}
 
 type instruction struct {
 	iTypeState instructionType // instruction type state: IF, ID, ...
-	opState    string          // operand state //TODO READY state?
 	opType     int             // operation type - is either “0”, “1”, or “2”.
 	tag        int             // sequence number (auto increment when read)
 	startCycle []int           // cycle that the instruction started per instruction type
 	endCycle   []int           // cycle that the instruction completed per instruction type
+	rs         int             // reservation station number for this operation
 
 	pc      string // program counter
 	destReg int    // destination register
@@ -84,8 +81,30 @@ var issue_list list.List
 
 var execute_list list.List
 
+// instruction_list is the complete list of instructions (in order) processed by the simulation
+var instruction_list list.List
+
+// registerStatus - track busy registers, not concerned with the actual loading and storing of values
+type registerStatus struct {
+	Qi int // reservation station number that will produce the result that will be stored at this register location
+}
+
 // Registers between 0 and 127
-var registers [128]int // registers //TODO are these needed?
+var RegisterStat [128]registerStatus
+
+// Tomasulo reservation station
+type reservationStation struct {
+	Op   int  // operation to perform (functional unit)
+	Qj   int  // reservation station that will produce source 1
+	Qk   int  // reservation station that will produce source 2
+	Vj   int  // value of source 1 operand (V? values and regs are not implemented in this sim)
+	Vk   int  // value of source 2 operand (V? values and regs are not implemented in this sim)
+	A    int  // memory address calculation (unused by this sim)
+	Busy bool // reservation station is busy
+}
+
+// TODO-01 how big should RS be?, N+1 for each FU? Get should return available RS per requested FU. -1 for unavailable
+var RS [128]reservationStation
 
 // Globals
 var SchedulingQueueSize int // <S> Scheduling Queue size
@@ -150,6 +169,12 @@ func main() {
 		Issue()
 		Dispatch()
 		Fetch(traceScanner)
+	}
+
+	// Display final output
+	for e := instruction_list.Front(); e != nil; e = e.Next() {
+		i := e.Value.(*instruction)
+		printInstructionTiming(i)
 	}
 
 	// Instructions completed Per Cycle
@@ -219,12 +244,32 @@ func Execute() {
 				// This is the final stage and will not be incremented further, we must set end cycle here
 				i.endCycle[i.iTypeState] = i.startCycle[i.iTypeState] + 1
 
-				//TODO
-				// // 3) Update the register file state e.g., ready flag)
-				// //    and wakeup dependent instructions (set their operand ready flags).
-
 				i.printInstruction(note + " EX -> WB")
-				printInstructionTiming(i)
+				//printInstructionTiming(i)
+
+				// 3) Update the register file state e.g., ready flag)
+				//    and wakeup dependent instructions (set their operand ready flags).
+
+				// Tomasulo Stage 3: write result
+				r := i.rs
+
+				for x := range RegisterStat {
+					if RegisterStat[x].Qi == r {
+						//regs[x] = result;
+						RegisterStat[x].Qi = 0
+					}
+				}
+				for x := range RS {
+					if RS[x].Qj == r {
+						//RS[x].Vj = result;
+						RS[x].Qj = 0
+					}
+					if RS[x].Qk == r {
+						//RS[x].Vk = result;
+						RS[x].Qk = 0
+					}
+				}
+				RS[r].Busy = false
 
 				// Add instructions to temp_list for removal
 				temp_list.PushBack(e.Value)
@@ -264,9 +309,14 @@ func Issue() {
 
 		// From the issue_list, construct a temp list of instructions whose
 		// operands are ready – these are the READY instructions.
-		//TODO all source operands are ready? Check instructions for more info
+
 		for e := issue_list.Front(); e != nil; e = e.Next() {
-			temp_list = append(temp_list, e.Value.(*instruction))
+			i := e.Value.(*instruction)
+
+			// Tomasulo Stage 2: execute
+			if RS[i.rs].Qj == 0 && RS[i.rs].Qk == 0 {
+				temp_list = append(temp_list, i)
+			}
 		}
 
 		// Scan the READY instructions in ascending order of tags
@@ -274,6 +324,8 @@ func Issue() {
 			return temp_list[i].tag < temp_list[j].tag
 		})
 		for issueCt, i := range temp_list {
+			//TODO-02 potential issue here with the peak fetch. Need to ensure that there is room in our execute list?
+			//   See 'sim 64S 1N perl' config profile: instruction 1 should delay until instruction 0 has executed
 			if issueCt >= NPeakFetch+1 {
 				i.printInstruction("Issue stalled")
 				continue
@@ -345,9 +397,40 @@ func Dispatch() {
 			// if the scheduling queue is not full, then:
 			i.incrementStage() // ID -> IS
 
-			//TODO
-			// // 3) Rename source operands by looking up state in the register file;
-			// //    Rename destination by updating state in the register file.
+			// 3) Rename source operands by looking up state in the register file;
+			//    Rename destination by updating state in the register file.
+
+			// Tomasulo Stage 1: issue
+			r := getAvailableReservationStation()
+			rd := i.destReg
+			rs := i.src1Reg
+			rt := i.src2Reg
+
+			if rs != -1 {
+				if RegisterStat[rs].Qi != 0 {
+					RS[r].Qj = RegisterStat[rs].Qi
+				} else {
+					//RS[r].Vj = Regs[rs];
+					RS[r].Qj = 0
+				}
+			}
+
+			if rt != -1 {
+				if RegisterStat[rt].Qi != 0 {
+					RS[r].Qk = RegisterStat[rt].Qi
+				} else {
+					//RS[r].Vk = Regs[rt];
+					RS[r].Qk = 0
+				}
+			}
+
+			RS[r].Busy = true
+			if rd != -1 {
+				RegisterStat[rd].Qi = r
+			}
+
+			RS[r].Op = i.opType
+			i.rs = r
 
 			i.printInstruction("Dispatch ID -> IS")
 
@@ -393,6 +476,9 @@ func Fetch(traceScanner *bufio.Scanner) {
 
 			// 2) Add the instruction to the dispatch_list
 			dispatch_list.PushBack(i)
+
+			// Add the instruction to the instruction_list for validation comparison
+			instruction_list.PushBack(i)
 		} else {
 			// 1) you have not reached the end-of-file
 			traceEOF = true
@@ -416,11 +502,9 @@ func Advance_Cycle() bool {
 	}
 	numCycles++
 
-	if earlyExit {
-		if numCycles > earlyExitCycles {
-			fmt.Printf("[EARLY EXIT - SANITY CHECK]\n")
-			return false
-		}
+	if earlyExitCycleLimit > 0 && numCycles >= earlyExitCycleLimit {
+		fmt.Printf("[EARLY EXIT - SANITY CHECK]\n")
+		return false
 	}
 	return true
 }
@@ -441,11 +525,11 @@ func readTrace(line string) *instruction {
 
 	i := &instruction{
 		iTypeState: iTypeIF,
-		opState:    "unknown",
 		opType:     convertTraceStrToInt(s[1]),
 		tag:        tag,
 		startCycle: make([]int, len(instructionName)),
 		endCycle:   make([]int, len(instructionName)),
+		rs:         -1,
 
 		pc:      s[0],
 		destReg: convertTraceStrToInt(s[2]),
@@ -493,8 +577,8 @@ func (i *instruction) incrementStage() {
 
 func (i *instruction) printInstruction(note string) {
 	if devMode {
-		fmt.Printf("- %-20s - tag: %5d (%s) pc: %s op: %d dst: %2d src1: %2d src2: %2d oState: %s\n", note, i.tag, instructionName[i.iTypeState], i.pc, i.opType,
-			i.destReg, i.src1Reg, i.src2Reg, i.opState)
+		fmt.Printf("- %-20s - tag: %5d (%s) pc: %s op: %d dst: %2d src1: %2d src2: %2d rs: %d\n", note, i.tag, instructionName[i.iTypeState], i.pc, i.opType,
+			i.destReg, i.src1Reg, i.src2Reg, i.rs)
 	}
 }
 
@@ -507,6 +591,25 @@ func printTask(taskName string) {
 	// 	fmt.Printf("%d) %-20s - dispatch: %d(%d) issue: %d(%d) execute: %d ROB: %d\n", numCycles, taskName, dispatch_list.Len(), dispatchQueueMax, issue_list.Len(), SchedulingQueueSize,
 	// 		execute_list.Len(), ROB.Len())
 	// }
+}
+
+func getAvailableReservationStation() int {
+	for i, rs := range RS {
+		if !rs.Busy {
+			// initialize values before returning
+			rs.Op = -1
+			rs.Qj = 0
+			rs.Qk = 0
+			rs.Vj = 0
+			rs.Vk = 0
+			rs.A = 0
+			return i
+		}
+	}
+
+	//TODO-01
+	log.Fatalf("no free reservation station available\n")
+	return -1
 }
 
 // if traceScanner.Err() != nil {
