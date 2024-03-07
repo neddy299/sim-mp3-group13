@@ -13,7 +13,6 @@ import (
 
 //TODO
 // - Determine amount of available reservation stations and handle accordingly (see TODO-01)
-// - Some instructions are moving into execute phase too soon (see TODO-02)
 
 // Debug settings
 const devMode = true          // print out extra information such as stage and instruction progress (disable for final submission)
@@ -104,7 +103,7 @@ type reservationStation struct {
 }
 
 // TODO-01 how big should RS be?, N+1 for each FU? Get should return available RS per requested FU. -1 for unavailable
-var RS [128]reservationStation
+var RS [200]reservationStation // Temp fix for 'sim 128S 8N perl' config profile
 
 // Globals
 var SchedulingQueueSize int // <S> Scheduling Queue size
@@ -324,8 +323,6 @@ func Issue() {
 			return temp_list[i].tag < temp_list[j].tag
 		})
 		for issueCt, i := range temp_list {
-			//TODO-02 potential issue here with the peak fetch. Need to ensure that there is room in our execute list?
-			//   See 'sim 64S 1N perl' config profile: instruction 1 should delay until instruction 0 has executed
 			if issueCt >= NPeakFetch+1 {
 				i.printInstruction("Issue stalled")
 				continue
@@ -595,6 +592,10 @@ func printTask(taskName string) {
 
 func getAvailableReservationStation() int {
 	for i, rs := range RS {
+		if i == 0 {
+			continue // skip element 0 as a Qj/Qk value of 0 indicates that source operand is available
+		}
+
 		if !rs.Busy {
 			// initialize values before returning
 			rs.Op = -1
