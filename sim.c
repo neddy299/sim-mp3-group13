@@ -346,7 +346,7 @@ void FakeRetire() {
       if(((instruction*)(e->data))->iTypeState == iTypeWB) {
         printInstruction((instruction*)e->data, "FakeRetire remove");
         listRemove(&ROB, e);
-      }
+      } else break;
 
       e = next;
     }
