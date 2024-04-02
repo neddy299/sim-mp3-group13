@@ -13,22 +13,25 @@ memcheck: sim
 	valgrind ./sim 64 1 val_trace_perl.txt > /dev/null
 	valgrind ./sim 128 8 val_trace_perl.txt > /dev/null
 
-main: main.go
-	go build main.go
+sim-go: main.go
+	go build -o sim-go main.go
 
-parity: sim main
-	@./main 8 8 val_trace_gcc.txt > /tmp/sim_go.txt
+parity: sim sim-go
+	@./sim-go 8 8 val_trace_gcc.txt > /tmp/sim_go.txt
 	@./sim 8 8 val_trace_gcc.txt > /tmp/sim_c.txt
 	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
 	
-	@./main 2 8 val_trace_gcc.txt > /tmp/sim_go.txt
+	@./sim-go 2 8 val_trace_gcc.txt > /tmp/sim_go.txt
 	@./sim 2 8 val_trace_gcc.txt > /tmp/sim_c.txt
 	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
 	
-	@./main 64 1 val_trace_perl.txt > /tmp/sim_go.txt
+	@./sim-go 64 1 val_trace_perl.txt > /tmp/sim_go.txt
 	@./sim 64 1 val_trace_perl.txt > /tmp/sim_c.txt
 	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
 	
-	@./main 128 8 val_trace_perl.txt > /tmp/sim_go.txt
+	@./sim-go 128 8 val_trace_perl.txt > /tmp/sim_go.txt
 	@./sim 128 8 val_trace_perl.txt > /tmp/sim_c.txt
 	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
+
+csv-report: sim
+	./run-csv-report.sh

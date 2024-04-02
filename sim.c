@@ -109,10 +109,11 @@ char* formatString(const char* format, ...) {
 }
 
 // Debug settings
-int devMode = true;                // print out extra information such as stage and instruction progress (disable for final submission)
+int devMode = false;               // print out extra information such as stage and instruction progress (disable for final submission)
 int earlyExitCycleLimit = 0;       // execute specified amount of clock cycles and then terminate (set to 0 to disable)
 const char* outputPrefix = "_out"; // output debug filename prefix
 const char* outputSuffix = "txt";  // output debug file extension
+const char* logCSVReport = "_results.csv"; // Execution results CSV report
 
 //1) Define 5 states that an instruction can be in (e.g., use an enumerated
 //  type): IF (fetch), ID (dispatch), IS (issue), EX (execute), WB (writeback).
@@ -194,8 +195,8 @@ typedef struct reservationStation {
   int Busy; // reservation station is busy
 } reservationStation;
 
-// TODO-01 how big should RS be, N+1 for each FU? Get should return available RS per requested FU. -1 for unavailable
-#define RESERVATION_STATIONS 200 // Temp fix for 'sim 128S 8N perl' config profile
+// Reservation Stations
+#define RESERVATION_STATIONS 256
 reservationStation RS[RESERVATION_STATIONS];
 
 // Globals
@@ -232,6 +233,8 @@ void printInstructionTiming(instruction* i);
 int getAvailableReservationStation();
 
 void sortInstructions(instruction* list[], int len);
+
+void writeCSVReport(const char* traceFileName, int SchedulingQueueSize, int NPeakFetch, int numInstructions, int numCycles, double IPC);
 
 // Free dynamically allocated memory
 void freeData() {
@@ -325,6 +328,8 @@ int main(int argc, const char* argv[]) {
     fprintf(outputFile, "IPC                    = %.5f\n", IPC);
     fclose(outputFile);
   }
+
+  writeCSVReport(traceFileName, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles, IPC);
 
   freeData();
 
@@ -764,7 +769,7 @@ void printTask(const char* taskName) {
 int getAvailableReservationStation() {
   for(int i = 0; i < RESERVATION_STATIONS; ++i) {
     if(i == 0) {
-      continue;
+      continue;  // skip element 0 as a Qj/Qk value of 0 indicates that source operand is available
     }
 
     if(!RS[i].Busy) {
@@ -783,4 +788,28 @@ int getAvailableReservationStation() {
   exit(1);
 
   return -1;
+}
+
+void writeCSVReport(const char* traceFileName, int SchedulingQueueSize, int NPeakFetch, int numInstructions, int numCycles, double IPC) {
+  FILE* reportFile = NULL;
+  bool newReport = false;
+
+  if (reportFile = fopen(logCSVReport, "r")) {
+    fclose(reportFile);    
+  } else {
+    newReport = true;
+  }
+
+  reportFile = fopen(logCSVReport, "a+");
+  if(reportFile == NULL) {
+    fprintf(stderr, "unable to open CSV report file: %s", logCSVReport);
+    return;
+  }
+
+  if (newReport) {
+		fprintf(reportFile, "traceFileName,SchedulingQueueSize,NPeakFetch,numInstructions,numCycles,IPC\n");
+	}
+
+	fprintf(reportFile, "%s,%d,%d,%d,%d,%f\n", traceFileName, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles, IPC);  
+	fclose(reportFile);
 }

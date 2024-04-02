@@ -1,1 +1,5 @@
 _out*.txt
+_profile*.txt
+_results*.csv
+sim
+sim-go

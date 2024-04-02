@@ -11,14 +11,12 @@ import (
 	"strings"
 )
 
-//TODO
-// - Determine amount of available reservation stations and handle accordingly (see TODO-01)
-
 // Debug settings
-const devMode = true          // print out extra information such as stage and instruction progress (disable for final submission)
-const earlyExitCycleLimit = 0 // execeute specified amount of clock cycles and then terminate (set to 0 to disable)
-const outputPrefix = "_out"   // output debug filename prefix
-const outputSuffix = "txt"    // output debug file extension
+const devMode = false               // print out extra information such as stage and instruction progress (disable for final submission)
+const earlyExitCycleLimit = 0       // execeute specified amount of clock cycles and then terminate (set to 0 to disable)
+const outputPrefix = "_out"         // output debug filename prefix
+const outputSuffix = "txt"          // output debug file extension
+const logCSVReport = "_results.csv" // Execution results CSV report
 
 //1) Define 5 states that an instruction can be in (e.g., use an enumerated
 //  type): IF (fetch), ID (dispatch), IS (issue), EX (execute), WB (writeback).
@@ -102,8 +100,8 @@ type reservationStation struct {
 	Busy bool // reservation station is busy
 }
 
-// TODO-01 how big should RS be?, N+1 for each FU? Get should return available RS per requested FU. -1 for unavailable
-var RS [200]reservationStation // Temp fix for 'sim 128S 8N perl' config profile
+// Reservation Stations
+var RS [256]reservationStation
 
 // Globals
 var SchedulingQueueSize int // <S> Scheduling Queue size
@@ -188,6 +186,8 @@ func main() {
 		fmt.Fprintf(outputFile, "number of cycles       = %d\n", numCycles)
 		fmt.Fprintf(outputFile, "IPC                    = %.5f\n", IPC)
 	}
+
+	writeCSVReport(traceFileName, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles, IPC)
 }
 
 // FakeRetire();
@@ -584,10 +584,6 @@ func printTask(taskName string) {
 		fmt.Printf("%-20s - dispatch: %d(%d) issue: %d(%d) execute: %d ROB: %d cycle: %d\n", taskName, dispatch_list.Len(), dispatchQueueMax, issue_list.Len(), SchedulingQueueSize,
 			execute_list.Len(), ROB.Len(), numCycles)
 	}
-	// if devMode {
-	// 	fmt.Printf("%d) %-20s - dispatch: %d(%d) issue: %d(%d) execute: %d ROB: %d\n", numCycles, taskName, dispatch_list.Len(), dispatchQueueMax, issue_list.Len(), SchedulingQueueSize,
-	// 		execute_list.Len(), ROB.Len())
-	// }
 }
 
 func getAvailableReservationStation() int {
@@ -608,11 +604,27 @@ func getAvailableReservationStation() int {
 		}
 	}
 
-	//TODO-01
 	log.Fatalf("no free reservation station available\n")
 	return -1
 }
 
-// if traceScanner.Err() != nil {
-// 	log.Fatal(traceScanner.Err())
-// }
+func writeCSVReport(traceFileName string, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles int, IPC float64) {
+	newReport := false
+	_, err := os.Stat(logCSVReport)
+	if err != nil {
+		newReport = true
+	}
+
+	reportFile, err := os.OpenFile(logCSVReport, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "unable to open CSV report file: "+logCSVReport)
+		return
+	}
+
+	if newReport {
+		fmt.Fprintf(reportFile, "traceFileName,SchedulingQueueSize,NPeakFetch,numInstructions,numCycles,IPC\n")
+	}
+
+	fmt.Fprintf(reportFile, "%s,%d,%d,%d,%d,%f\n", traceFileName, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles, IPC)
+	reportFile.Close()
+}
