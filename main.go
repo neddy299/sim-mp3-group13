@@ -12,6 +12,7 @@ import (
 )
 
 // Debug settings
+const novel1 = true                 // novel approach 1 - use register reference counters and sort based on ref counter weight
 const devMode = false               // print out extra information such as stage and instruction progress (disable for final submission)
 const earlyExitCycleLimit = 0       // execeute specified amount of clock cycles and then terminate (set to 0 to disable)
 const outputPrefix = "_out"         // output debug filename prefix
@@ -83,7 +84,8 @@ var instruction_list list.List
 
 // registerStatus - track busy registers, not concerned with the actual loading and storing of values
 type registerStatus struct {
-	Qi int // reservation station number that will produce the result that will be stored at this register location
+	Qi    int // reservation station number that will produce the result that will be stored at this register location
+	Count int // reference counter
 }
 
 // Registers between 0 and 127
@@ -270,6 +272,11 @@ func Execute() {
 				}
 				RS[r].Busy = false
 
+				// decrement register ref counters
+				regRefCount(i.destReg, false)
+				regRefCount(i.src1Reg, false)
+				regRefCount(i.src2Reg, false)
+
 				// Add instructions to temp_list for removal
 				temp_list.PushBack(e.Value)
 			}
@@ -319,9 +326,17 @@ func Issue() {
 		}
 
 		// Scan the READY instructions in ascending order of tags
-		sort.SliceStable(temp_list, func(i, j int) bool {
-			return temp_list[i].tag < temp_list[j].tag
-		})
+		if novel1 {
+			sort.SliceStable(temp_list, func(i, j int) bool {
+				return temp_list[i].regWeight() < temp_list[j].regWeight()
+			})
+		} else {
+			sort.SliceStable(temp_list, func(i, j int) bool {
+				return temp_list[i].tag < temp_list[j].tag
+			})
+		}
+		profileIssue(temp_list)
+
 		for issueCt, i := range temp_list {
 			if issueCt >= NPeakFetch+1 {
 				i.printInstruction("Issue stalled")
@@ -425,6 +440,11 @@ func Dispatch() {
 			if rd != -1 {
 				RegisterStat[rd].Qi = r
 			}
+
+			// increment register ref counters
+			regRefCount(rd, true)
+			regRefCount(rs, true)
+			regRefCount(rt, true)
 
 			RS[r].Op = i.opType
 			i.rs = r
@@ -627,4 +647,41 @@ func writeCSVReport(traceFileName string, SchedulingQueueSize, NPeakFetch, numIn
 
 	fmt.Fprintf(reportFile, "%s,%d,%d,%d,%d,%f\n", traceFileName, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles, IPC)
 	reportFile.Close()
+}
+
+func regRefCount(register int, inc bool) {
+	if register == -1 {
+		return
+	}
+	if inc {
+		RegisterStat[register].Count++
+	} else {
+		RegisterStat[register].Count--
+	}
+}
+
+func (i *instruction) regWeight() int {
+	w := 0
+	if i.destReg != -1 {
+		w = w + RegisterStat[i.destReg].Count
+	}
+	if i.src1Reg != -1 {
+		w = w + RegisterStat[i.src1Reg].Count
+	}
+	if i.src2Reg != -1 {
+		w = w + RegisterStat[i.src2Reg].Count
+	}
+	return w
+}
+
+func profileIssue(temp_list []*instruction) {
+	pdata := ""
+	if len(temp_list) == 0 {
+		pdata = "empty,"
+	} else {
+		for _, i := range temp_list {
+			pdata = pdata + strconv.Itoa(i.tag) + ","
+		}
+	}
+	fmt.Printf("!issue-order (%4d): %s\n", numCycles, pdata[:len(pdata)-1])
 }
