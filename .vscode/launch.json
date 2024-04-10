@@ -10,8 +10,9 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}",
-            "cwd": "${workspaceFolder}",            
-            "args": ["2", "8", "val_trace_gcc.txt"]
+            "cwd": "${workspaceFolder}",           
+            "env": {"CGO_ENABLED": "0"}, 
+            "args": ["2", "8", "val_trace_gcc.txt"]            
         },
         {
             "name": "sim 8S 8N gcc",
@@ -19,7 +20,8 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}",
-            "cwd": "${workspaceFolder}",            
+            "cwd": "${workspaceFolder}",
+            "env": {"CGO_ENABLED": "0"},            
             "args": ["8", "8", "val_trace_gcc.txt"]
         },
         {
@@ -28,7 +30,8 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}",
-            "cwd": "${workspaceFolder}",            
+            "cwd": "${workspaceFolder}",
+            "env": {"CGO_ENABLED": "0"},            
             "args": ["64", "1", "val_trace_perl.txt"]
         },
         {
@@ -37,8 +40,9 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}",
-            "cwd": "${workspaceFolder}",            
+            "cwd": "${workspaceFolder}",
+            "env": {"CGO_ENABLED": "0"},            
             "args": ["128", "8", "val_trace_perl.txt"]
-        }    
+        }          
     ]
 }

@@ -1,14 +1,16 @@
 #!/bin/bash
 
-SIM_EXEC="./sim"
-#SIM_EXEC="./sim-go"
+EXPERIMENT=0
+
+#SIM_EXEC="./sim"
+SIM_EXEC="./sim-go"
 
 declare -a N_PEAK_FETCH=( 1 2 4 8 )
 declare -a SCHED_QUEUE_SIZE=( 8 16 32 64 128 256 )
 
 run_sim() {
-    echo $SIM_EXEC "$1" "$2" "$3"
-    $SIM_EXEC "$1" "$2" "$3" 1>/dev/null
+    echo $SIM_EXEC "$1" "$2" "$3" "$EXPERIMENT"
+    $SIM_EXEC "$1" "$2" "$3" "$EXPERIMENT" 1>/dev/null
 }
 
 process_valfile() {
