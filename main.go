@@ -1,5 +1,15 @@
 package main
 
+// Dynamic Instruction Scheduling Simulator
+
+// Usage:  sim <S> <N> <tracefile> [experiment]
+// Example: ./sim 2 8 val_trace_gcc.txt 3
+
+// <S> is the Scheduling Queue size
+// <N> is the peak fetch and dispatch rate, issue rate will be up to N+1 and
+// <tracefile> is the filename
+// [experiment] optional experiment number to run (Valid range 1 to 4)
+
 import (
 	"bufio"
 	"container/list"
@@ -13,7 +23,7 @@ import (
 
 // experimental settings
 var (
-	experiment = 0 // novel approach 1 - use priority based weighting for ready instuctions in issue pipeline. Activate specific experiment with a value > 0. Invalid experiment numbers will default to original FIFO method
+	experiment = 0 // use priority based weighting for ready instuctions in issue pipeline. Activate specific experiment with a value > 0. Invalid experiment numbers will default to original FIFO method
 )
 
 // Debug settings
@@ -109,7 +119,7 @@ type reservationStation struct {
 }
 
 // Reservation Stations
-var RS [256]reservationStation
+var RS [1000]reservationStation
 
 // Globals
 var SchedulingQueueSize int // <S> Scheduling Queue size
@@ -343,11 +353,12 @@ func Issue() {
 				return temp_list[i].tag < temp_list[j].tag
 			})
 		} else {
-			// Scan the READY instructions based on priority weights (experimental method)
+			// Scan the READY instructions based on ascending priority weights (experimental methods)
 			sort.SliceStable(temp_list, func(i, j int) bool {
 				return temp_list[i].expWeight() < temp_list[j].expWeight()
 			})
 		}
+
 		profileIssue(temp_list)
 
 		for issueCt, i := range temp_list {
@@ -729,7 +740,7 @@ func (i *instruction) experiment1() int {
 	if i.src2Reg != -1 {
 		w = w + RegisterStat[i.src2Reg].Count
 	}
-	return w
+	return -w
 }
 
 // experiment Type: register reference counter - prioritize destination registers
@@ -746,7 +757,7 @@ func (i *instruction) experiment2() int {
 	if i.src2Reg != -1 {
 		w = w + RegisterStat[i.src2Reg].Count
 	}
-	return w
+	return -w
 }
 
 // experiment Type: prioritize SLOW instructions

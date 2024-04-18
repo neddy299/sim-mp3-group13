@@ -1,6 +1,9 @@
 sim: sim.c
 	gcc sim.c -o sim
 
+clean: 
+	rm sim sim-go
+
 test: sim
 	./run-test.sh 8 8 val_trace_gcc.txt pipe_8_8_gcc.txt
 	./run-test.sh 2 8 val_trace_gcc.txt pipe_2_8_gcc.txt
