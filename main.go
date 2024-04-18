@@ -1,5 +1,15 @@
 package main
 
+// Dynamic Instruction Scheduling Simulator
+
+// Usage:  sim <S> <N> <tracefile> [experiment]
+// Example: ./sim 2 8 val_trace_gcc.txt 3
+
+// <S> is the Scheduling Queue size
+// <N> is the peak fetch and dispatch rate, issue rate will be up to N+1 and
+// <tracefile> is the filename
+// [experiment] optional experiment number to run (Valid range 1 to 4)
+
 import (
 	"bufio"
 	"container/list"
@@ -11,12 +21,18 @@ import (
 	"strings"
 )
 
+// experimental settings
+var (
+	experiment = 0 // use priority based weighting for ready instuctions in issue pipeline. Activate specific experiment with a value > 0. Invalid experiment numbers will default to original FIFO method
+)
+
 // Debug settings
 const devMode = false               // print out extra information such as stage and instruction progress (disable for final submission)
 const earlyExitCycleLimit = 0       // execeute specified amount of clock cycles and then terminate (set to 0 to disable)
+const enableIssueProfiling = false  // profile order of issued instructions
 const outputPrefix = "_out"         // output debug filename prefix
 const outputSuffix = "txt"          // output debug file extension
-const logCSVReport = "_results.csv" // Execution results CSV report
+const logCSVReport = "_results_exp" // Execution results CSV report
 
 //1) Define 5 states that an instruction can be in (e.g., use an enumerated
 //  type): IF (fetch), ID (dispatch), IS (issue), EX (execute), WB (writeback).
@@ -83,7 +99,9 @@ var instruction_list list.List
 
 // registerStatus - track busy registers, not concerned with the actual loading and storing of values
 type registerStatus struct {
-	Qi int // reservation station number that will produce the result that will be stored at this register location
+	Qi     int // reservation station number that will produce the result that will be stored at this register location
+	Count  int // reference counter for experiements/testing
+	Count2 int // reference counter for experiements/testing
 }
 
 // Registers between 0 and 127
@@ -101,7 +119,7 @@ type reservationStation struct {
 }
 
 // Reservation Stations
-var RS [256]reservationStation
+var RS [1000]reservationStation
 
 // Globals
 var SchedulingQueueSize int // <S> Scheduling Queue size
@@ -123,8 +141,8 @@ func main() {
 
 	// Parse command line arguments
 	var err error
-	if len(os.Args) != 4 {
-		log.Fatalf("Usage: %s <S> <N> <tracefile>", os.Args[0])
+	if len(os.Args) < 4 {
+		log.Fatalf("Usage: %s <S> <N> <tracefile> [experimentNumber]", os.Args[0])
 	}
 	SchedulingQueueSize, err = strconv.Atoi(os.Args[1])
 	if err != nil {
@@ -136,6 +154,14 @@ func main() {
 	}
 	dispatchQueueMax = NPeakFetch * 2
 	traceFileName := os.Args[3]
+
+	// Activate experiments
+	if len(os.Args) >= 5 {
+		experiment, err = strconv.Atoi(os.Args[4])
+		if err != nil {
+			log.Fatalf("Invalid type: '%s' for parameter [experiment] is not an integer", os.Args[4])
+		}
+	}
 
 	// Open trace file
 	trace, err := os.Open(traceFileName)
@@ -201,8 +227,6 @@ func FakeRetire() {
 		for e := ROB.Front(); e != nil && e.Value.(*instruction).iTypeState == iTypeWB; e = e.Next() {
 			// Add instructions to temp_list for removal
 			temp_list.PushBack(e.Value)
-
-			//TODO Optimzation: don't use temp_list for removal? manually perform e.Next() iterator before removal?
 		}
 
 		//1) Remove the instruction from the ROB.
@@ -270,6 +294,11 @@ func Execute() {
 				}
 				RS[r].Busy = false
 
+				// decrement register ref counters
+				regRefCount(i.destReg, false, true)
+				regRefCount(i.src1Reg, false, false)
+				regRefCount(i.src2Reg, false, false)
+
 				// Add instructions to temp_list for removal
 				temp_list.PushBack(e.Value)
 			}
@@ -318,10 +347,20 @@ func Issue() {
 			}
 		}
 
-		// Scan the READY instructions in ascending order of tags
-		sort.SliceStable(temp_list, func(i, j int) bool {
-			return temp_list[i].tag < temp_list[j].tag
-		})
+		if experiment == 0 {
+			// Scan the READY instructions in ascending order of tags (Original FIFO method)
+			sort.SliceStable(temp_list, func(i, j int) bool {
+				return temp_list[i].tag < temp_list[j].tag
+			})
+		} else {
+			// Scan the READY instructions based on ascending priority weights (experimental methods)
+			sort.SliceStable(temp_list, func(i, j int) bool {
+				return temp_list[i].expWeight() < temp_list[j].expWeight()
+			})
+		}
+
+		profileIssue(temp_list)
+
 		for issueCt, i := range temp_list {
 			if issueCt >= NPeakFetch+1 {
 				i.printInstruction("Issue stalled")
@@ -425,6 +464,11 @@ func Dispatch() {
 			if rd != -1 {
 				RegisterStat[rd].Qi = r
 			}
+
+			// increment register ref counters
+			regRefCount(rd, true, true)
+			regRefCount(rs, true, false)
+			regRefCount(rt, true, false)
 
 			RS[r].Op = i.opType
 			i.rs = r
@@ -610,14 +654,15 @@ func getAvailableReservationStation() int {
 
 func writeCSVReport(traceFileName string, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles int, IPC float64) {
 	newReport := false
-	_, err := os.Stat(logCSVReport)
+	logFileName := fmt.Sprintf("%s%d.csv", logCSVReport, experiment)
+	_, err := os.Stat(logFileName)
 	if err != nil {
 		newReport = true
 	}
 
-	reportFile, err := os.OpenFile(logCSVReport, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	reportFile, err := os.OpenFile(logFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "unable to open CSV report file: "+logCSVReport)
+		fmt.Fprintf(os.Stderr, "unable to open CSV report file: "+logFileName)
 		return
 	}
 
@@ -627,4 +672,104 @@ func writeCSVReport(traceFileName string, SchedulingQueueSize, NPeakFetch, numIn
 
 	fmt.Fprintf(reportFile, "%s,%d,%d,%d,%d,%f\n", traceFileName, SchedulingQueueSize, NPeakFetch, numInstructions, numCycles, IPC)
 	reportFile.Close()
+}
+
+func profileIssue(temp_list []*instruction) {
+	if !enableIssueProfiling {
+		return
+	}
+
+	pdata := ""
+	if len(temp_list) == 0 {
+		pdata = "empty,"
+	} else {
+		for _, i := range temp_list {
+			pdata = pdata + strconv.Itoa(i.tag) + ","
+		}
+	}
+	fmt.Printf("!issue-order (%4d): %s\n", numCycles, pdata[:len(pdata)-1])
+}
+
+func regRefCount(register int, inc, destinationRegister bool) {
+	if register == -1 {
+		return
+	}
+
+	if experiment == 2 && destinationRegister {
+		if inc {
+			RegisterStat[register].Count2++
+		} else {
+			RegisterStat[register].Count2--
+		}
+	}
+
+	if inc {
+		RegisterStat[register].Count++
+	} else {
+		RegisterStat[register].Count--
+	}
+}
+
+func (i *instruction) expWeight() int {
+	switch experiment {
+	case 1:
+		return i.experiment1()
+	case 2:
+		return i.experiment2()
+	case 3:
+		return i.experiment3()
+	case 4:
+		return i.experiment4()
+	}
+
+	// Use default FIFO method if an experiment is not found
+	return i.tag
+}
+
+// experiment Type: register reference counter - basic
+// - Add up reference counts for all registers and return weighted value
+// - Use a fair weight for all registers
+func (i *instruction) experiment1() int {
+	w := 0
+	if i.destReg != -1 {
+		w = w + RegisterStat[i.destReg].Count
+	}
+	if i.src1Reg != -1 {
+		w = w + RegisterStat[i.src1Reg].Count
+	}
+	if i.src2Reg != -1 {
+		w = w + RegisterStat[i.src2Reg].Count
+	}
+	return -w
+}
+
+// experiment Type: register reference counter - prioritize destination registers
+// - Add up reference counts for all registers and return weighted value
+// - Use a greater weight for destination registers
+func (i *instruction) experiment2() int {
+	w := 0
+	if i.destReg != -1 {
+		w = w + RegisterStat[i.destReg].Count2*3
+	}
+	if i.src1Reg != -1 {
+		w = w + RegisterStat[i.src1Reg].Count
+	}
+	if i.src2Reg != -1 {
+		w = w + RegisterStat[i.src2Reg].Count
+	}
+	return -w
+}
+
+// experiment Type: prioritize SLOW instructions
+// - Process most expensive instructions first
+// - Use tag number as tie breaker
+func (i *instruction) experiment3() int {
+	return i.tag - (operandLatency[i.opType] * SchedulingQueueSize)
+}
+
+// experiment Type: prioritize FAST instructions
+// - Process least expensive instructions first
+// - Use tag number as tie breaker
+func (i *instruction) experiment4() int {
+	return i.tag + (operandLatency[i.opType] * SchedulingQueueSize)
 }
