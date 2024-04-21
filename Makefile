@@ -20,21 +20,7 @@ sim-go: main.go
 	go build -o sim-go main.go
 
 parity: sim sim-go
-	@./sim-go 8 8 val_trace_gcc.txt > /tmp/sim_go.txt
-	@./sim 8 8 val_trace_gcc.txt > /tmp/sim_c.txt
-	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
-	
-	@./sim-go 2 8 val_trace_gcc.txt > /tmp/sim_go.txt
-	@./sim 2 8 val_trace_gcc.txt > /tmp/sim_c.txt
-	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
-	
-	@./sim-go 64 1 val_trace_perl.txt > /tmp/sim_go.txt
-	@./sim 64 1 val_trace_perl.txt > /tmp/sim_c.txt
-	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
-	
-	@./sim-go 128 8 val_trace_perl.txt > /tmp/sim_go.txt
-	@./sim 128 8 val_trace_perl.txt > /tmp/sim_c.txt
-	@diff -qs /tmp/sim_go.txt /tmp/sim_c.txt
+	./run-parity-check.sh
 
 csv-report: sim
 	./run-csv-report.sh
