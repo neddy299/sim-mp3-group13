@@ -720,6 +720,8 @@ func (i *instruction) expWeight() int {
 		return i.experiment3()
 	case 4:
 		return i.experiment4()
+	case 5:
+		return i.experiment5()
 	}
 
 	// Use default FIFO method if an experiment is not found
@@ -772,4 +774,19 @@ func (i *instruction) experiment3() int {
 // - Use tag number as tie breaker
 func (i *instruction) experiment4() int {
 	return i.tag + (operandLatency[i.opType] * SchedulingQueueSize)
+}
+
+// experiment Type: register reference counter - prioritize source register
+// - Return weighted value for number of total source/target references
+func (i *instruction) experiment5() int {
+	w := 0
+
+	if i.src1Reg != -1 {
+		w = w + RegisterStat[i.src1Reg].Count
+	}
+	if i.src2Reg != -1 {
+		w = w + RegisterStat[i.src2Reg].Count
+	}
+	
+	return w
 }

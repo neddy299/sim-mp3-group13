@@ -4,6 +4,9 @@
 #include <stdarg.h>
 #include <string.h>
 
+// Experimental settings
+int experiment = 0;
+
 typedef struct Node {
   void* data;
   struct Node* prev;
@@ -111,6 +114,7 @@ char* formatString(const char* format, ...) {
 // Debug settings
 int devMode = false;               // print out extra information such as stage and instruction progress (disable for final submission)
 int earlyExitCycleLimit = 0;       // execute specified amount of clock cycles and then terminate (set to 0 to disable)
+int enableIssueProfiling = false;   // profile order of issued instructions
 const char* outputPrefix = "_out"; // output debug filename prefix
 const char* outputSuffix = "txt";  // output debug file extension
 const char* logCSVReport = "_results.csv"; // Execution results CSV report
@@ -178,6 +182,8 @@ List instruction_list = { NULL, NULL, 0 };
 // registerStatus - track busy registers, not concerned with the actual loading and storing of values
 typedef struct registerStatus {
   int Qi; // reservation station number that will produce the result that will be stored at this register location
+  int Count; // reference counter for experiments
+  int Count2; // reference counter for experiments
 } registerStatus;
 
 // Registers between 0 and 127
@@ -196,7 +202,7 @@ typedef struct reservationStation {
 } reservationStation;
 
 // Reservation Stations
-#define RESERVATION_STATIONS 256
+#define RESERVATION_STATIONS 1000
 reservationStation RS[RESERVATION_STATIONS];
 
 // Globals
@@ -232,8 +238,11 @@ void printInstructionTiming(instruction* i);
 
 int getAvailableReservationStation();
 
+void regRefCount(int reg, int inc, int destinationRegister);
 void sortInstructions(instruction* list[], int len);
+void prioritySort(instruction* list[], int len);
 
+void profileIssue(instruction* list[], int);
 void writeCSVReport(const char* traceFileName, int SchedulingQueueSize, int NPeakFetch, int numInstructions, int numCycles, double IPC);
 
 // Free dynamically allocated memory
@@ -253,9 +262,14 @@ int main(int argc, const char* argv[]) {
   traceEOF = false;
 
   // Parse command line arguments
-  if(argc != 4) {
-    fprintf(stderr, "Usage: %s <S> <N> <tracefile>\n", argv[0]);
+  if(argc < 4) {
+    fprintf(stderr, "Usage: %s <S> <N> <tracefile> <experiment>\n", argv[0]);
     return 1;
+  } else if(argc == 5) {
+    if((experiment = atoi(argv[4])) == 0) {
+      fprintf(stderr, "Invalid experiment '%s' for parameter <experiment> is not an integer\n", argv[4]);
+      return 1;
+    }
   }
 
   if((SchedulingQueueSize = atoi(argv[1])) == 0) {
@@ -414,6 +428,10 @@ void Execute() {
 
         RS[r].Busy = false;
 
+        regRefCount(i->destReg, false, true);
+        regRefCount(i->src1Reg, false, false);
+        regRefCount(i->src2Reg, false, false);
+
         //1) Remove the instruction from the execute_list.
         listRemove(&execute_list, e);
       }
@@ -459,7 +477,9 @@ void Issue() {
     }
 
     // Scan the READY instructions in ascending order of tags
-    sortInstructions(temp_list, list_len);
+    prioritySort(temp_list, list_len);
+
+    profileIssue(temp_list, list_len);
 
     for(int issueCt = 0; issueCt < list_len; ++issueCt) {
       instruction* i = temp_list[issueCt];
@@ -580,6 +600,10 @@ void Dispatch() {
       if(rd != -1) {
         RegisterStat[rd].Qi = r;
       }
+
+      regRefCount(rd, true, true);
+      regRefCount(rs, true, false);
+      regRefCount(rt, true, false);
 
       RS[r].Op = i->opType;
       i->rs = r;
@@ -736,15 +760,136 @@ void incrementStage(instruction* i) {
   i->startCycle[i->iTypeState] = numCycles;
 }
 
-void sortInstructions(instruction* list[], int len) {
-  for(int i = 0; i < len; ++i) {
-    for(int j = i + 1; j < len; ++j) {
-      if(list[j]->tag < list[i]->tag) {
-        instruction* tmp = list[i];
-        list[i] = list[j];
-        list[j] = tmp;
+void regRefCount(int reg, int inc, int destinationRegister) {
+  if(reg != -1) {
+    if(experiment == 2 && destinationRegister) {
+      if(inc) RegisterStat[reg].Count2++;
+      else RegisterStat[reg].Count2--;
+    }
+
+    if(inc) RegisterStat[reg].Count++;
+    else RegisterStat[reg].Count--;
+  }
+}
+
+int experiment1(instruction* i) {
+  int w = 0;
+
+  if(i->destReg != -1) {
+    w += RegisterStat[i->destReg].Count;
+  }
+  if(i->src1Reg != -1) {
+    w += RegisterStat[i->src1Reg].Count;
+  }
+  if(i->src2Reg != -1) {
+    w += RegisterStat[i->src2Reg].Count;
+  }
+
+  return -w;
+}
+
+int experiment2(instruction* i) {
+  int w = 0;
+
+  if(i->destReg != -1) {
+    w += RegisterStat[i->destReg].Count2 * 3;
+  }
+  if(i->src1Reg != -1) {
+    w += RegisterStat[i->src1Reg].Count;
+  }
+  if(i->src2Reg != -1) {
+    w += RegisterStat[i->src2Reg].Count;
+  }
+
+  return -w;
+}
+
+int experiment3(instruction* i) {
+  return i->tag - (operandLatency[i->opType] * SchedulingQueueSize);
+}
+
+int experiment4(instruction* i) {
+  return i->tag + (operandLatency[i->opType] * SchedulingQueueSize);
+}
+
+int experiment5(instruction* i) {
+  int w = 0;
+
+  if(i->src1Reg != -1) {
+    w += RegisterStat[i->src1Reg].Count;
+  }
+  if(i->src2Reg != -1) {
+    w += RegisterStat[i->src2Reg].Count;
+  }
+
+  return w;
+}
+
+int expWeight(instruction* i) {
+  switch(experiment) {
+    case 1:
+      return experiment1(i);
+    case 2:
+      return experiment2(i);
+    case 3:
+      return experiment3(i);
+    case 4:
+      return experiment4(i);
+    case 5:
+      return experiment5(i);
+  }
+
+  return i->tag;
+}
+
+void profileIssue(instruction* list[], int len) {
+  if(!enableIssueProfiling) {
+    return;
+  }
+
+  printf("!issue-order (%4d): ", numCycles);
+  if(len == 0) {
+    printf("%s\n", "empty");
+  } else {
+    for(int i = 0; i < len; ++i) {
+      if(i == len - 1) {
+        printf("%i", list[i]->tag);
+      } else {
+        printf("%i,", list[i]->tag);
       }
     }
+    
+    printf("\n");
+  }
+}
+
+void prioritySort(instruction* list[], int len) {
+  for(int i = 1; i < len; ++i) {
+    int j = i - 1;
+
+    instruction* ins = list[i];
+
+    while(j >= 0 && expWeight(list[j]) > expWeight(ins)) {
+      list[j + 1] = list[j];
+      j--;
+    }
+
+    list[j + 1] = ins;
+  }
+}
+
+void sortInstructions(instruction* list[], int len) {
+  for(int i = 1; i < len; ++i) {
+    int j = i - 1;
+
+    instruction* ins = list[i];
+
+    while(j >= 0 && list[j]->tag > ins->tag) {
+      list[j + 1] = list[j];
+      j--;
+    }
+
+    list[j + 1] = ins;
   }
 }
 
