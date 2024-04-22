@@ -100,8 +100,8 @@ var instruction_list list.List
 // registerStatus - track busy registers, not concerned with the actual loading and storing of values
 type registerStatus struct {
 	Qi     int // reservation station number that will produce the result that will be stored at this register location
-	Count  int // reference counter for experiements/testing
-	Count2 int // reference counter for experiements/testing
+	Count  int // reference counter for experiments/testing
+	Count2 int // reference counter for experiments/testing
 }
 
 // Registers between 0 and 127
@@ -787,6 +787,6 @@ func (i *instruction) experiment5() int {
 	if i.src2Reg != -1 {
 		w = w + RegisterStat[i.src2Reg].Count
 	}
-	
+
 	return w
 }
