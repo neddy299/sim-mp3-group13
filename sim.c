@@ -1,3 +1,15 @@
+//go:build ignore
+
+// Dynamic Instruction Scheduling Simulator
+
+// Usage:  sim <S> <N> <tracefile> [experiment]
+// Example: ./sim 2 8 val_trace_gcc.txt 3
+
+// <S> is the Scheduling Queue size
+// <N> is the peak fetch and dispatch rate, issue rate will be up to N+1 and
+// <tracefile> is the filename
+// [experiment] optional experiment number to run (Valid range 1 to 4)
+
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,7 +129,7 @@ int earlyExitCycleLimit = 0;       // execute specified amount of clock cycles a
 int enableIssueProfiling = false;   // profile order of issued instructions
 const char* outputPrefix = "_out"; // output debug filename prefix
 const char* outputSuffix = "txt";  // output debug file extension
-const char* logCSVReport = "_results.csv"; // Execution results CSV report
+const char* logCSVReport = "_results_exp"; // Execution results CSV report
 
 //1) Define 5 states that an instruction can be in (e.g., use an enumerated
 //  type): IF (fetch), ID (dispatch), IS (issue), EX (execute), WB (writeback).
@@ -263,12 +275,14 @@ int main(int argc, const char* argv[]) {
 
   // Parse command line arguments
   if(argc < 4) {
-    fprintf(stderr, "Usage: %s <S> <N> <tracefile> <experiment>\n", argv[0]);
+    fprintf(stderr, "Usage: %s <S> <N> <tracefile> [experimentNumber]\n", argv[0]);
     return 1;
   } else if(argc == 5) {
     if((experiment = atoi(argv[4])) == 0) {
-      fprintf(stderr, "Invalid experiment '%s' for parameter <experiment> is not an integer\n", argv[4]);
-      return 1;
+      if (!(strlen(argv[4]) == 1 && argv[4][0] == '0')) {  
+        fprintf(stderr, "Invalid experiment '%s' for parameter <experiment> is not an integer\n", argv[4]);
+        return 1;
+      }
     }
   }
 
@@ -428,6 +442,7 @@ void Execute() {
 
         RS[r].Busy = false;
 
+        // decrement register ref counters
         regRefCount(i->destReg, false, true);
         regRefCount(i->src1Reg, false, false);
         regRefCount(i->src2Reg, false, false);
@@ -601,6 +616,7 @@ void Dispatch() {
         RegisterStat[rd].Qi = r;
       }
 
+      // increment register ref counters
       regRefCount(rd, true, true);
       regRefCount(rs, true, false);
       regRefCount(rt, true, false);
@@ -772,6 +788,9 @@ void regRefCount(int reg, int inc, int destinationRegister) {
   }
 }
 
+// experiment Type: register reference counter - basic
+// - Add up reference counts for all registers and return weighted value
+// - Use a fair weight for all registers
 int experiment1(instruction* i) {
   int w = 0;
 
@@ -788,6 +807,9 @@ int experiment1(instruction* i) {
   return -w;
 }
 
+// experiment Type: register reference counter - prioritize destination registers
+// - Add up reference counts for all registers and return weighted value
+// - Use a greater weight for destination registers
 int experiment2(instruction* i) {
   int w = 0;
 
@@ -804,14 +826,22 @@ int experiment2(instruction* i) {
   return -w;
 }
 
+// experiment Type: prioritize SLOW instructions
+// - Process most expensive instructions first
+// - Use tag number as tie breaker
 int experiment3(instruction* i) {
   return i->tag - (operandLatency[i->opType] * SchedulingQueueSize);
 }
 
+// experiment Type: prioritize FAST instructions
+// - Process least expensive instructions first
+// - Use tag number as tie breaker
 int experiment4(instruction* i) {
   return i->tag + (operandLatency[i->opType] * SchedulingQueueSize);
 }
 
+// experiment Type: register reference counter - prioritize source register
+// - Return weighted value for number of total source/target references
 int experiment5(instruction* i) {
   int w = 0;
 
@@ -938,16 +968,17 @@ int getAvailableReservationStation() {
 void writeCSVReport(const char* traceFileName, int SchedulingQueueSize, int NPeakFetch, int numInstructions, int numCycles, double IPC) {
   FILE* reportFile = NULL;
   bool newReport = false;
+  char* logFileName = formatString("%s%d.csv", logCSVReport, experiment);
 
-  if (reportFile = fopen(logCSVReport, "r")) {
+  if (reportFile = fopen(logFileName, "r")) {
     fclose(reportFile);    
   } else {
     newReport = true;
   }
 
-  reportFile = fopen(logCSVReport, "a+");
+  reportFile = fopen(logFileName, "a+");
   if(reportFile == NULL) {
-    fprintf(stderr, "unable to open CSV report file: %s", logCSVReport);
+    fprintf(stderr, "unable to open CSV report file: %s", logFileName);
     return;
   }
 
