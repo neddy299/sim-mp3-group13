@@ -2,7 +2,7 @@ sim: sim.c
 	gcc sim.c -o sim
 
 clean: 
-	rm sim sim-go _test_*.txt
+	rm sim sim-go _test_*.txt _results_*.csv
 
 test: sim
 	./run-test.sh 8 8 val_trace_gcc.txt ./validation_runs/pipe_8_8_gcc.txt

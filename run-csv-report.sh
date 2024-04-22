@@ -2,8 +2,8 @@
 
 EXPERIMENT=0
 
-#SIM_EXEC="./sim"
-SIM_EXEC="./sim-go"
+SIM_EXEC="./sim"
+#SIM_EXEC="./sim-go"
 
 declare -a N_PEAK_FETCH=( 1 2 4 8 )
 declare -a SCHED_QUEUE_SIZE=( 8 16 32 64 128 256 )
